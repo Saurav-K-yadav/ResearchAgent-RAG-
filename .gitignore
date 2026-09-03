@@ -1,0 +1,14 @@
+.env
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+chroma_data/
+pdfs/
+langsmith_logs/
+*.log
+*.pid
+demo_output.json
+gemini_demo_output.json
+gemini_run2.json
