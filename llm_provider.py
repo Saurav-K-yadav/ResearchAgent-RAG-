@@ -96,6 +96,158 @@ def _extract_text_from_response(response) -> str:
     return str(response)
 
 
+def _extract_usage_metadata(response) -> Dict[str, Any]:
+    """Extract token usage from Gemini responses, if available."""
+    usage = {}
+    try:
+        # google.genai uses response.usage_metadata on the top-level response
+        if hasattr(response, 'usage_metadata'):
+            usage_obj = response.usage_metadata
+            if usage_obj is not None:
+                for key in ["prompt_token_count", "candidates_token_count", "total_token_count", "cache_tokens_details"]:
+                    val = getattr(usage_obj, key, None)
+                    if val is not None:
+                        usage[key] = val
+        if hasattr(response, 'result') and hasattr(response.result, 'usage_metadata'):
+            usage_obj = response.result.usage_metadata
+            if usage_obj is not None:
+                for key in ["prompt_token_count", "candidates_token_count", "total_token_count"]:
+                    val = getattr(usage_obj, key, None)
+                    if val is not None:
+                        usage[key] = val
+        # dict-like payloads
+        if isinstance(response, dict):
+            for key in ["usage_metadata", "usage"]:
+                val = response.get(key)
+                if isinstance(val, dict):
+                    usage.update(val)
+        # older google.generativeai response may have .usage_metadata or .usage
+        if not usage and hasattr(response, 'usage'):
+            usage = getattr(response, 'usage')
+    except Exception:
+        pass
+
+    if not usage:
+        return {}
+
+    normalized = {}
+    for key in ["prompt_token_count", "candidates_token_count", "total_token_count", "cache_tokens_details"]:
+        if key in usage:
+            normalized[key] = usage[key]
+    return normalized
+
+
+def _choose_model_name(client, preferred_model: Optional[str] = None) -> str:
+    """Resolve a working Gemini model name.
+
+    Keep the user's explicit preference if it still exists, otherwise use a known
+    stable model from the account's available model list. This avoids failures when
+    the configured model name has been deprecated or renamed by Google.
+    """
+    preferred = preferred_model or GEMINI_MODEL
+    available = []
+    try:
+        iterator = client.models.list()
+        for item in iterator:
+            name = getattr(item, "name", None) or str(item)
+            if name:
+                available.append(name.replace("models/", ""))
+    except Exception:
+        available = []
+
+    preference_order = [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+        "gemini-flash-latest",
+    ]
+
+    if preferred:
+        if preferred.startswith("models/"):
+            preferred = preferred.removeprefix("models/")
+        if preferred in available:
+            return preferred
+
+    for candidate in preference_order:
+        if candidate in available:
+            return candidate
+
+    if preferred and preferred not in available:
+        return preferred
+
+    if available:
+        return available[0]
+    return "gemini-2.5-flash"
+
+
+def _model_candidates(client, preferred_model: Optional[str] = None) -> list[str]:
+    """Return ordered model names, trying the preferred one first and falling back if needed."""
+    preferred = preferred_model or GEMINI_MODEL
+    if preferred and preferred.startswith("models/"):
+        preferred = preferred.removeprefix("models/")
+
+    available = []
+    try:
+        iterator = client.models.list()
+        for item in iterator:
+            name = getattr(item, "name", None) or str(item)
+            if name:
+                available.append(name.replace("models/", ""))
+    except Exception:
+        available = []
+
+    ordered = []
+    seen = set()
+
+    def add(name):
+        if not name:
+            return
+        name = name.replace("models/", "")
+        if name not in seen:
+            ordered.append(name)
+            seen.add(name)
+
+    if preferred:
+        add(preferred)
+    for model_name in [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+        "gemini-flash-latest",
+    ]:
+        add(model_name)
+    for model_name in available:
+        add(model_name)
+    if not ordered:
+        ordered = ["gemini-2.5-flash"]
+    return ordered
+
+
+def _is_token_limit_error(exc: Exception) -> bool:
+    """Detect retryable Gemini model errors such as token-limit or model-availability failures."""
+    msg = str(exc).lower()
+    tokens = [
+        "token limit",
+        "maximum context length",
+        "prompt too long",
+        "too many tokens",
+        "maximum number of tokens",
+        "resource exhausted",
+        "429",
+        "quota exceeded",
+        "context length",
+        "not found",
+        "not available",
+        "no longer available",
+        "model .* is no longer available",
+    ]
+    return any(token in msg for token in tokens)
+
+
 def chat_with_gemini(prompt: str, system_message: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
     """Send a chat-style prompt to Gemini and return the response dict.
 
@@ -103,86 +255,63 @@ def chat_with_gemini(prompt: str, system_message: Optional[str] = None, model: O
 
     Raises RuntimeError when configuration or the SDK is missing.
     """
-    if model is None:
-        model = GEMINI_MODEL
+    selected_model = model or GEMINI_MODEL
 
     _configure_genai()
 
     # Build messages (system + user) as a single prompt for SDKs that accept text
     full_prompt = (system_message + "\n\n" if system_message else "") + prompt
 
+    last_error = None
     if _GENAI_NEW:
-        # google.genai usage
         client = genai.Client(api_key=GOOGLE_API_KEY)
-        try:
-            # Determine model name: prefer explicit model, otherwise try listing models
-            model_name = model
+        model_names = _model_candidates(client, selected_model)
+        for model_name in model_names:
             try:
-                if not model_name:
-                    models_iter = client.models.list()
-                    # models_iter may be a pager/generator; take first
-                    first = None
-                    for m in models_iter:
-                        first = getattr(m, 'name', None) or str(m)
-                        break
-                    if first:
-                        model_name = first
-            except Exception:
-                # ignore listing failures
-                pass
+                chat = client.chats.create(model=model_name)
+                response = chat.send_message(full_prompt)
+                text = _extract_text_from_response(response)
+                raw = response
+                usage = _extract_usage_metadata(raw)
+                try:
+                    if _HAS_LANGSMITH and log_interaction:
+                        try:
+                            log_interaction(prompt=full_prompt, response_text=text, model=model_name, usage=usage)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                return {"text": text, "raw": raw, "usage": usage}
+            except Exception as exc:
+                last_error = exc
+                if not _is_token_limit_error(exc):
+                    break
+        raise RuntimeError(f"Gemini (google.genai) request failed after trying models {model_names}: {last_error}")
 
-            # Create a chat and send the prompt
-            chat = client.chats.create(model=model_name)
-            response = chat.send_message(full_prompt)
-            text = _extract_text_from_response(response)
-            raw = response
-        except Exception as e:
-            raise RuntimeError(f"Gemini (google.genai) request failed: {e}")
-    else:
-        # older google.generativeai fallback
-        try:
-            genai.configure(api_key=GOOGLE_API_KEY)
-            # Try the GenerativeModel API if available
+    # Older SDK fallback path remains supported but without advanced retry logic.
+    try:
+        genai.configure(api_key=GOOGLE_API_KEY)
+        model_names = [selected_model] if selected_model else ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
+        for model_name in model_names:
             try:
-                model_obj = genai.GenerativeModel(model_name=model)
+                model_obj = genai.GenerativeModel(model_name=model_name)
                 response = model_obj.generate_content(full_prompt)
                 text = _extract_text_from_response(response)
                 raw = response
-            except Exception:
-                # chat or generate_text fallback
+                usage = _extract_usage_metadata(raw)
                 try:
-                    response = genai.chat.create(model=model, messages=[{"role": "user", "content": full_prompt}])
-                    text = _extract_text_from_response(response)
-                    raw = response
-                except Exception as ex:
-                    response = genai.generate_text(model=model, input=full_prompt)
-                    text = _extract_text_from_response(response)
-                    raw = response
-        except Exception as e:
-            raise RuntimeError(f"Gemini request failed: {e}")
-
-    # Log to LangSmith if available (do not expose secrets in logs)
-    try:
-        if _HAS_LANGSMITH and log_interaction:
-            try:
-                log_interaction(prompt=full_prompt, response_text=text, model=model)
-            except Exception:
-                # Non-fatal: tracing failures should not block main flow
-                pass
-    except Exception:
-        pass
-
-    return {"text": text, "raw": raw}
-
-    # Log to LangSmith if available (do not expose secrets in logs)
-    try:
-        if _HAS_LANGSMITH and log_interaction:
-            try:
-                log_interaction(prompt=prompt, response_text=text, model=model)
-            except Exception:
-                # Non-fatal: tracing failures should not block main flow
-                pass
-    except Exception:
-        pass
-
-    return {"text": text, "raw": response}
+                    if _HAS_LANGSMITH and log_interaction:
+                        try:
+                            log_interaction(prompt=full_prompt, response_text=text, model=model_name, usage=usage)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                return {"text": text, "raw": raw, "usage": usage}
+            except Exception as exc:
+                last_error = exc
+                if not _is_token_limit_error(exc):
+                    break
+        raise RuntimeError(f"Gemini request failed after trying models {model_names}: {last_error}")
+    except Exception as e:
+        raise RuntimeError(f"Gemini request failed: {e}")

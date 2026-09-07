@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+chroma_data/
+pdfs/
+langsmith_logs/
+.git/
+.env
+*.log
+*.pid

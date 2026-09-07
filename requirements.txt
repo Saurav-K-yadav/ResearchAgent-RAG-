@@ -9,4 +9,6 @@ numpy
 python-dotenv
 google-genai
 langchain
+langgraph
 gradio
+huggingface_hub

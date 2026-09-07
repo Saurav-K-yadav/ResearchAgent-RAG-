@@ -26,46 +26,62 @@ _log_dir = os.path.join(os.path.dirname(__file__), "langsmith_logs")
 os.makedirs(_log_dir, exist_ok=True)
 
 
-def _http_log(prompt: str, response_text: str, model: str) -> bool:
-    """Post a run to the LangSmith HTTP API. Returns True on success."""
+def _http_log(prompt: str, response_text: str, model: str, usage: dict | None = None) -> bool:
+    """Post a run to the LangSmith HTTP API. Returns True on success.
+
+    LangSmith requires the API key in the X-Api-Key header and a run_type field
+    in the payload. Using Authorization: Bearer ... does not authenticate for the
+    public API, which is why tracing previously appeared to fail even when the
+    key was valid.
+    """
     if not LANGSMITH_ENDPOINT or not LANGSMITH_API_KEY:
         return False
-    # Compose a lightweight payload. LangSmith's API expects a particular shape;
-    # this implementation uses a best-effort generic payload that includes project
-    # and run data. If the API shape differs, the call will likely return an error
-    # and we'll fall back to file logging.
-    url = LANGSMITH_ENDPOINT.rstrip("/") + "/v1/runs"
-    headers = {"Authorization": f"Bearer {LANGSMITH_API_KEY}", "Content-Type": "application/json"}
+
+    url = LANGSMITH_ENDPOINT.rstrip("/") + "/api/v1/runs"
+    headers = {"X-Api-Key": LANGSMITH_API_KEY, "Content-Type": "application/json"}
+
+    usage_payload = {}
+    if usage:
+        for k in ["prompt_token_count", "candidates_token_count", "total_token_count"]:
+            if k in usage:
+                usage_payload[k] = usage[k]
+
     payload = {
         "project": LANGSMITH_PROJECT,
         "name": "agent-interaction",
+        "run_type": "chain",
         "inputs": {
             "prompt": prompt[:500],
-            "response": response_text[:2000],
             "model": model,
         },
-        "metadata": {"source": "local-agent"},
+        "outputs": {
+            "response": response_text[:2000],
+        },
+        "metadata": {
+            "source": "local-agent",
+            "usage": usage_payload,
+        },
     }
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
-        if resp.status_code in (200, 201):
+        if resp.status_code in (200, 201, 202):
             return True
         return False
     except Exception:
         return False
 
 
-def log_interaction(prompt: str, response_text: str, model: str) -> None:
+def log_interaction(prompt: str, response_text: str, model: str, usage: dict | None = None) -> None:
     """Record an interaction to LangSmith via HTTP if configured, else write local JSON.
 
     This function never logs secrets or API keys. Local logs store only timestamp,
-    model name, prompt (truncated), and response (truncated).
+    model name, prompt (truncated), response (truncated), and token usage if available.
     """
     if not LANGSMITH_ENABLED:
         return
 
     try:
-        ok = _http_log(prompt, response_text, model)
+        ok = _http_log(prompt, response_text, model, usage)
         if ok:
             return
     except Exception:
@@ -78,6 +94,7 @@ def log_interaction(prompt: str, response_text: str, model: str) -> None:
         "model": model,
         "prompt": prompt[:500],
         "response": response_text[:2000],
+        "usage": usage or {},
     }
     try:
         fname = os.path.join(_log_dir, datetime.utcnow().strftime("%Y%m%dT%H%M%S.%f") + ".json")

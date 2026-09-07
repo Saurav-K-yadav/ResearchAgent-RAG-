@@ -4,8 +4,9 @@ I want to build a local Agentic workflow using the Model Context Protocol (MCP).
 # Tech Stack & Requirements
 - **Language:** Python 3.11+
 - **MCP Framework:** `mcp` (server exposes FastMCP tools when available; server.py includes a CLI fallback)
+- **Agent orchestration:** `langgraph` state machine for deciding which tool to invoke and routing the workflow
 - **Model / LLM:** Google Gemini via the `google-genai` SDK (uses API key from .env)
-- **LangSmith Tracing:** Direct HTTP integration to LangSmith endpoint (LANGSMITH_ENDPOINT) with safe local fallback logs
+- **LangSmith Tracing:** Direct HTTP integration to LangSmith endpoint (LANGSMITH_ENDPOINT) using the `X-Api-Key` header and required `run_type` payload field, with safe local fallback logs
 - **Vector DB:** `chromadb` (PersistentClient, saves to `./chroma_data`)
 - **Embeddings:** `sentence-transformers` (Use `all-MiniLM-L6-v2` for local, free embeddings)
 - **PDF Parsing:** `pymupdf` (fitz)

@@ -1,65 +1,39 @@
-# ResearchAgent — Local MCP Workflow with Google Gemini and LangSmith
+# ResearchAgent
 
-This project builds a local research assistant ("ResearchAgent") that:
-- Searches arXiv and downloads PDFs
-- Extracts text from PDFs and ingests them into a local, persistent ChromaDB
-- Uses local SentenceTransformers embeddings (all-MiniLM-L6-v2)
-- Performs Retrieval-Augmented Generation (RAG) by combining retrieved chunks
-  with Google Gemini to answer user questions
-- Traces interactions to LangSmith via an HTTP API (or local log fallback)
-- Exposes tools for MCP (FastMCP when available) and a Gradio UI for interactive use
+I built a local-first research assistant for academic paper workflows. It helps me search arXiv, download PDFs, ingest them into a local vector database, and ask grounded questions using Gemini.
 
-Contents
-- requirements.txt — Python dependencies
-- arxiv_fetcher.py — search + download logic
-- database.py — PDF reading, chunking (RecursiveCharacterTextSplitter), embeddings and ChromaDB ingestion/query
-- server.py — exposes tools (search_and_download_paper, ingest_paper, query_database, ask_gemini, agent_orchestrate) and CLI fallback
-- llm_provider.py — Google Gemini (google.genai) wrapper
-- langsmith_integration.py — direct LangSmith HTTP logger with safe local fallback
-- gradio_app.py — Gradio UI for the core actions
-- project_instructions.md — original project instructions (updated)
+I have done the following:
+- built the end-to-end workflow for paper search and PDF download
+- parsed PDF text and split it into chunks for retrieval
+- stored embeddings in a local ChromaDB database
+- connected Gemini for answer generation and fallback behavior
+- added a LangGraph-based agent to decide which tool to use
+- added LangSmith tracing with a local fallback when remote tracing is unavailable
+- built a polished Gradio interface with tabs for search, ingest, ask, and agent actions
+- uploaded the project to Hugging Face with the HF CLI
 
-Important: Security
-- All credentials are read from `.env` (project root) via python-dotenv. Do NOT commit `.env` to public repos.
-- The application never prints or logs secret values. LangSmith HTTP requests use the API key only in Authorization headers.
+What I am using in the project now:
+- Python for the project logic
+- ChromaDB for local vector search
+- SentenceTransformers for embeddings
+- Google Gemini for answer generation
+- LangGraph for orchestration
+- LangSmith for tracing when configured
+- Gradio for the UI
 
-Quick setup
-1. Create and activate a Python 3.11+ virtualenv in the project root:
-   python3 -m venv venv
-   source ./venv/bin/activate
-2. Install dependencies:
-   ./venv/bin/pip install -r requirements.txt
-3. Ensure `.env` contains at least:
-   - GOOGLE_API_KEY
-   - LANGSMITH_API_KEY (optional, used for LangSmith remote logging)
-   - LANGSMITH_ENDPOINT (optional)
-   - LANGSMITH_TRACING (true/false)
-4. Run the Gradio UI:
-   ./venv/bin/python gradio_app.py
-   Then open http://localhost:7860 in your browser.
+What I still need to do:
+- add OCR support for scanned PDFs that do not contain selectable text
+- add automated tests for the retrieval and answer flow
+- add a cleaner project screenshot and a stronger demo landing page
+- simplify the setup instructions for non-developer users
+- add a deployment config for a more production-ready Hugging Face Space setup
 
-How it works (high level)
-1. Search & download
-   - `arxiv_fetcher.search_and_download` uses the `arxiv` Python library to find results and downloads PDFs to ./pdfs/.
-2. Ingest
-   - `database.ingest_pdf` reads the PDF with PyMuPDF, splits each page into chunks using `RecursiveCharacterTextSplitter(chunk_size=1000, overlap=200)`, embeds chunks with SentenceTransformers (`all-MiniLM-L6-v2`), and stores documents and embeddings in a persistent ChromaDB at `./chroma_data`.
-3. Query / Ask
-   - `server.ask_gemini` retrieves top-k chunks from ChromaDB, composes a prompt containing those passages and the user's question, and calls Gemini via `llm_provider.chat_with_gemini` (google.genai). The response and context are returned.
-4. Tracing
-   - `langsmith_integration.log_interaction` attempts to post a run to the configured LangSmith HTTP endpoint. If that fails or is not configured, a safe local JSON log is written to `./langsmith_logs/`.
-5. Agent orchestration
-   - `server.agent_orchestrate` asks Gemini which local tool to call (returns JSON specifying tool and args). The orchestrator then invokes the selected tool (search/ingest/query/ask) and returns that tool's result.
+How I run it locally:
+1. Create a virtual environment
+2. Install the dependencies from requirements.txt
+3. Add the required environment values in .env
+4. Run the Gradio app
+5. Use the workflow in the UI: search -> ingest -> ask -> agent
 
-Files of interest
-- [gradio_app.py](/home/sky/Desktop/project/gradio_app.py) — web UI
-- [server.py](/home/sky/Desktop/project/server.py) — MCP tools and CLI fallback
-- [llm_provider.py](/home/sky/Desktop/project/llm_provider.py) — Google GenAI helper
-- [langsmith_integration.py](/home/sky/Desktop/project/langsmith_integration.py) — HTTP LangSmith logging
-- [database.py](/home/sky/Desktop/project/database.py) — Chroma ingestion and query
-- [arxiv_fetcher.py](/home/sky/Desktop/project/arxiv_fetcher.py) — arXiv download
-
-Notes & troubleshooting
-- If using a Google API key, ensure it is valid for Gemini Developer API and set in `.env` as `GOOGLE_API_KEY`.
-- The google-genai SDK prefers explicit API key or application credentials; the code auto-selects a model when `GEMINI_MODEL` is not set.
-- LangSmith tracing is optional — set `LANGSMITH_TRACING=true` and provide `LANGSMITH_API_KEY` and `LANGSMITH_ENDPOINT` in `.env` to enable remote runs.
+This version is a working version of the project. It is functional, local-first, and ready for further iteration.
 
