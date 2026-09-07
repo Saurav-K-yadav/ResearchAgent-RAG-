@@ -12,3 +12,5 @@ langchain
 langgraph
 gradio
 huggingface_hub
+transformers
+torch

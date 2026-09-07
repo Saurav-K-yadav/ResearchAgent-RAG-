@@ -1,25 +1,27 @@
 """App wrapper for Hugging Face Spaces.
 
-Spaces expect an entrypoint (app.py) that exposes a Gradio `Blocks` or `Interface` instance.
-This file imports the demo from gradio_app and exposes it as the `app` variable.
+This wrapper prefers a lightweight demo (space_app.py) when present so the
+Space can run without external API keys. If space_app isn't available, it
+falls back to the full gradio_app demo.
 
-Do not call `.launch()` here; the Spaces runtime will host the app.
+Do not call `.launch()` here; the Spaces runtime will host the app and
+expect a variable named `app` that is a Gradio Blocks or Interface.
 """
 import os
 
+# Prefer a small, self-contained demo app if present (good for Spaces without keys)
+app = None
 try:
-    import gradio_app
-except Exception as e:
-    raise RuntimeError("Failed to import gradio_app. Ensure dependencies are installed and gradio_app.py is present.") from e
-
-# gradio_app defines the Blocks as `demo` in the module scope
-app = getattr(gradio_app, "demo", None)
-if app is None:
-    # Try alternative names
-    app = getattr(gradio_app, "app", None)
+    import space_app
+    app = getattr(space_app, "app", None) or getattr(space_app, "demo", None)
+except Exception:
+    app = None
 
 if app is None:
-    raise RuntimeError("Could not find a Gradio Blocks/Interface instance named 'demo' or 'app' in gradio_app.py")
+    try:
+        import gradio_app
+        app = getattr(gradio_app, "demo", None) or getattr(gradio_app, "app", None)
+    except Exception as e:
+        raise RuntimeError("Failed to import any Gradio app (space_app or gradio_app). Ensure one of them exposes 'app' or 'demo'.") from e
 
-# Expose `app` for HF Spaces runtime
 __all__ = ["app"]
