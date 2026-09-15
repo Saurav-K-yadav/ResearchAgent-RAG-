@@ -1,0 +1,16 @@
+Title: Simple Transformer Methods for Graphs
+
+Abstract:
+We propose a compact transformer architecture tuned for graph-structured data. The model combines sparse attention patterns with node positional encodings to reduce complexity while preserving expressivity. Experiments on three benchmark datasets show competitive performance with substantially reduced memory usage.
+
+Introduction:
+Graph-structured data appears in many domains. Existing transformer approaches scale poorly to large graphs due to quadratic attention. Our key idea is to apply localized attention windows combined with a lightweight global aggregator. We also show how standard augmentation techniques improve generalization.
+
+Methods:
+We build on standard transformer blocks and replace dense attention with a hybrid local-global attention that attends to node neighborhoods and a small set of global tokens. The model uses a learnable positional encoding per node and aggregates features via a sum-pooling operation.
+
+Results:
+On benchmark datasets A, B, and C we observe similar accuracy to dense models while reducing peak memory by 40%.
+
+Conclusion:
+The proposed method is a practical way to bring transformer-style modeling to medium-scale graphs without prohibitive memory costs. The code and dataset splits are provided for reproducibility.

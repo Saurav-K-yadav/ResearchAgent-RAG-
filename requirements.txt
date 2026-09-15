@@ -1,0 +1,15 @@
+mcp
+chromadb
+sentence-transformers
+pymupdf
+arxiv
+langchain-text-splitters
+requests
+numpy
+python-dotenv
+google-genai
+langchain
+langgraph
+gradio
+transformers
+torch
